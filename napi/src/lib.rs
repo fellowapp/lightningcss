@@ -615,6 +615,9 @@ struct CssModulesConfig {
   grid: Option<bool>,
   custom_idents: Option<bool>,
   pure: Option<bool>,
+  hash_prefix: Option<String>,
+  hash_local_name: Option<bool>,
+  escape_scoped_names: Option<bool>,
 }
 
 #[cfg(feature = "bundler")]
@@ -728,6 +731,9 @@ fn compile<'i>(
               grid: c.grid.unwrap_or(true),
               custom_idents: c.custom_idents.unwrap_or(true),
               pure: c.pure.unwrap_or_default(),
+              hash_prefix: c.hash_prefix.clone().map(std::borrow::Cow::Owned),
+              hash_local_name: c.hash_local_name.unwrap_or_default(),
+              escape_scoped_names: c.escape_scoped_names.unwrap_or_default(),
             }),
           }
         } else {
@@ -860,6 +866,9 @@ fn compile_bundle<
             grid: c.grid.unwrap_or(true),
             custom_idents: c.custom_idents.unwrap_or(true),
             pure: c.pure.unwrap_or_default(),
+            hash_prefix: c.hash_prefix.clone().map(std::borrow::Cow::Owned),
+            hash_local_name: c.hash_local_name.unwrap_or_default(),
+            escape_scoped_names: c.escape_scoped_names.unwrap_or_default(),
           }),
         }
       } else {
