@@ -15,7 +15,7 @@ if (process.platform === 'linux') {
 
 let native;
 try {
-  native = require(`lightningcss-${parts.join('-')}`);
+  native = require(`@fellowapp/lightningcss-${parts.join('-')}`);
 } catch (err) {
   native = require(`../lightningcss.${parts.join('-')}.node`);
 }
