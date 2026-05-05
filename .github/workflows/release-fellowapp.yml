@@ -1,0 +1,166 @@
+name: release-fellowapp
+# Build platform-specific .node binaries and publish the Fellow fork to
+# GitHub Packages as @fellowapp/lightningcss + @fellowapp/lightningcss-<platform>.
+# Triggered manually via workflow_dispatch.
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            strip: strip -x
+
+    name: build-${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+      - uses: dtolnay/rust-toolchain@stable
+      - run: rustup target add ${{ matrix.target }}
+      - uses: bahmutov/npm-install@v1.8.32
+      - name: Build release
+        run: yarn build-release
+        env:
+          RUST_TARGET: ${{ matrix.target }}
+      - name: Strip debug symbols
+        if: ${{ matrix.strip }}
+        run: ${{ matrix.strip }} *.node
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bindings-${{ matrix.target }}
+          path: '*.node'
+
+  build-apple-silicon:
+    name: build-apple-silicon
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+      - uses: dtolnay/rust-toolchain@stable
+      - run: rustup target add aarch64-apple-darwin
+      - uses: bahmutov/npm-install@v1.8.32
+      - name: Build release
+        run: yarn build-release
+        env:
+          RUST_TARGET: aarch64-apple-darwin
+          JEMALLOC_SYS_WITH_LG_PAGE: 14
+      - name: Strip debug symbols
+        run: strip -x *.node
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bindings-aarch64-apple-darwin
+          path: '*.node'
+
+  build-linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            strip: strip
+            image: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-debian
+            setup: npm install --global yarn@1
+          - target: aarch64-unknown-linux-gnu
+            strip: llvm-strip
+            image: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-debian-aarch64
+          - target: aarch64-linux-android
+            strip: llvm-strip
+            image: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-debian-aarch64
+          - target: armv7-unknown-linux-gnueabihf
+            strip: llvm-strip
+            image: ghcr.io/napi-rs/napi-rs/nodejs-rust@sha256:c22284b2d79092d3e885f64ede00f6afdeb2ccef7e2b6e78be52e7909091cd57
+          - target: aarch64-unknown-linux-musl
+            image: ghcr.io/napi-rs/napi-rs/nodejs-rust@sha256:78c9ab1f117f8c535b93c4b91a2f19063dda6e4dba48a6187df49810625992c1
+            strip: aarch64-linux-musl-strip
+          - target: x86_64-unknown-linux-musl
+            image: ghcr.io/napi-rs/napi-rs/nodejs-rust@sha256:78c9ab1f117f8c535b93c4b91a2f19063dda6e4dba48a6187df49810625992c1
+            strip: strip
+
+    name: build-${{ matrix.target }}
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ matrix.image }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Setup Android NDK
+        if: ${{ matrix.target == 'aarch64-linux-android' }}
+        run: |
+          sudo apt update && sudo apt install unzip -y
+          cd /tmp
+          wget -q https://dl.google.com/android/repository/android-ndk-r28-linux.zip -O /tmp/ndk.zip
+          unzip ndk.zip
+      - name: Setup cross compile toolchain
+        if: ${{ matrix.setup }}
+        run: ${{ matrix.setup }}
+      - run: rustup target add ${{ matrix.target }}
+      - uses: bahmutov/npm-install@v1.8.32
+      - name: Build release
+        run: yarn build-release
+        env:
+          ANDROID_NDK_LATEST_HOME: /tmp/android-ndk-r28
+          RUST_TARGET: ${{ matrix.target }}
+      - name: Strip debug symbols
+        if: ${{ matrix.strip }}
+        run: ${{ matrix.strip }} *.node
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bindings-${{ matrix.target }}
+          path: '*.node'
+
+  release:
+    runs-on: ubuntu-latest
+    name: Publish to GitHub Packages
+    needs:
+      - build
+      - build-linux
+      - build-apple-silicon
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          registry-url: https://npm.pkg.github.com
+          scope: '@fellowapp'
+      - uses: bahmutov/npm-install@v1.8.32
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Show artifacts
+        run: ls -R artifacts
+      - name: Build npm packages
+        run: node scripts/build-npm.js
+      - name: Publish platform packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for pkg in npm/*; do
+            echo "Publishing $pkg..."
+            (cd "$pkg" && npm publish)
+          done
+      - name: Publish main package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Publishing @fellowapp/lightningcss..."
+          npm publish
